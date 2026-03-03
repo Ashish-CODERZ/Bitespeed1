@@ -4,8 +4,8 @@ Identity reconciliation backend built with Node.js, Express, Prisma, and Postgre
 
 ## Live Endpoint
 
-- Base URL: `<add your deployed Render URL here>`
-- Identify URL: `<add your deployed Render URL here>/identify`
+- Base URL: `http://bitespeed-identity-service-ws9x.onrender.com`
+- Identify URL: `http://bitespeed-identity-service-ws9x.onrender.com/identify`
 
 ## Problem Statement
 
