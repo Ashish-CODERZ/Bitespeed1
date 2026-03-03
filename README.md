@@ -1,21 +1,52 @@
-# Identity Reconciliation Service
+# Bitespeed Identity Reconciliation Service
 
-Backend service for identity reconciliation using JavaScript, Express, Prisma, and PostgreSQL (Neon-ready).
+Identity reconciliation backend built with Node.js, Express, Prisma, and PostgreSQL.
 
-Note: this repository currently uses `dist/` JavaScript files as the active runtime/source code.
+## Live Endpoint
 
-## Problem understanding
+- Base URL: `<add your deployed Render URL here>`
+- Identify URL: `<add your deployed Render URL here>/identify`
 
-Given `email` and/or `phoneNumber`, the service resolves one identity cluster:
+## Problem Statement
 
-- Contacts are related if they share `email` or `phoneNumber`.
-- Each cluster has exactly one `PRIMARY` contact.
-- All others are `SECONDARY` with `linkedId = primary.id`.
-- If input connects separate clusters, they are merged atomically.
+Given an incoming `email` and/or `phoneNumber`, the service must return a single consolidated identity view.
+
+Rules implemented:
+
+1. Two contacts are related if either `email` or `phoneNumber` matches.
+2. Each connected identity group has exactly one `primary` contact.
+3. Remaining contacts are `secondary` with `linkedId = primary.id`.
+4. If a request bridges two existing groups, groups are merged in one transaction.
 
 This problem models identity reconciliation as dynamic connected component resolution where each contact represents a node and shared attributes represent edges.
 
-## Project structure
+## How Reconciliation Works
+
+At `POST /identify`, the service:
+
+1. Normalizes input (`trim`, empty string -> `null`, requires at least one field).
+2. Finds direct matches by email/phone.
+3. Expands to full connected cluster.
+4. Chooses canonical primary by oldest `createdAt` (tie-breaker: lowest `id`).
+5. Converts non-primary records to `secondary`.
+6. Creates a new secondary only when request adds new information.
+7. Returns deduplicated emails/phone numbers and secondary IDs.
+
+To reduce race conditions:
+
+- `SERIALIZABLE` transaction isolation is used.
+- advisory locks are acquired per identifier.
+- retry/backoff is applied for transient transaction conflicts.
+
+## Stack
+
+- Node.js + Express
+- Prisma ORM
+- PostgreSQL (Neon supported)
+- Docker / Docker Compose (optional)
+- Render deployment config (`render.yaml`)
+
+## Project Layout
 
 ```text
 dist/
@@ -32,159 +63,14 @@ prisma/
   schema.prisma
 Dockerfile
 docker-compose.yml
+render.yaml
 ```
 
-## Prisma and Neon setup
+## API Contract
 
-Use both URLs:
+### `POST /identify`
 
-- `DATABASE_URL`: Neon pooled connection (pooler host)
-- `DIRECT_URL`: Neon direct connection (non-pooler host, used by migrations)
-
-Example is already in `.env.example`.
-
-Set your local `.env`:
-
-```env
-PORT="3000"
-DATABASE_URL="postgresql://USER:PASSWORD@ep-xxxx-xxxx-pooler.region.aws.neon.tech/DB_NAME?sslmode=require&pgbouncer=true&connect_timeout=15"
-DIRECT_URL="postgresql://USER:PASSWORD@ep-xxxx-xxxx.region.aws.neon.tech/DB_NAME?sslmode=require&connect_timeout=15"
-```
-
-## Run with npm (local)
-
-1. Install dependencies:
-
-```bash
-npm install
-```
-
-2. Generate Prisma client:
-
-```bash
-npm run prisma:generate
-```
-
-3. Create/update schema:
-
-```bash
-npm run prisma:db:push
-```
-
-4. Start API:
-
-```bash
-npm run start
-```
-
-## Run with Docker
-
-1. Build and start services:
-
-```bash
-docker compose up --build
-```
-
-2. Access service:
-
-- Home: `http://localhost:3000/`
-- Health: `http://localhost:3000/health`
-- API docs: `http://localhost:3000/docs`
-
-3. Stop services:
-
-```bash
-docker compose down
-```
-
-## Is Docker mandatory?
-
-No. Docker is optional for this project.
-
-- Use Docker when you want consistent local setup (`app + postgres`) in one command.
-- For Neon + Render deployment, Docker is not required.
-
-## Deployment checklist (Neon + JavaScript)
-
-1. Set production env vars on your platform:
-
-```env
-PORT=3000
-DATABASE_URL=<neon pooled url>
-DIRECT_URL=<neon direct url>
-NODE_ENV=production
-```
-
-2. Run Prisma schema sync during deploy/start:
-
-```bash
-npm run prisma:generate
-npm run prisma:db:push
-```
-
-3. Start server:
-
-```bash
-npm run start
-```
-
-4. Verify:
-
-- `GET /health` returns `200`
-- `POST /identify` returns the expected contact payload
-
-## Deploy on Render (recommended for this task)
-
-`/identify` can be hosted on Render without Docker.
-
-1. Push this repo to GitHub.
-2. In Render, create a `Web Service` from your GitHub repo.
-3. Use:
-   - Build Command: `npm ci && npm run prisma:generate`
-   - Start Command: `npm run prisma:db:push && npm run start`
-4. Add environment variables in Render:
-   - `DATABASE_URL` = Neon pooled URL
-   - `DIRECT_URL` = Neon direct URL
-   - `NODE_ENV` = `production`
-5. Deploy and verify:
-   - `GET /health`
-   - `POST /identify`
-
-### Render port note
-
-On Render, do not force a fixed port. Render injects `PORT` automatically.
-
-This app already supports that:
-
-- it reads `process.env.PORT`
-- falls back to `3000` only for local runs
-
-## Submission checklist
-
-1. Publish repository on GitHub.
-2. Keep small commits with meaningful messages.
-3. Share live `/identify` endpoint URL in README.
-4. Ensure request body uses JSON (not form-data).
-
-## Migrations (recommended for production)
-
-Local/dev migration creation:
-
-```bash
-npm run prisma:migrate
-```
-
-Production migration apply:
-
-```bash
-npm run prisma:migrate:deploy
-```
-
-## API
-
-### POST /identify
-
-Request:
+Request body (`application/json`):
 
 ```json
 {
@@ -193,27 +79,111 @@ Request:
 }
 ```
 
-Response:
+Successful response:
 
 ```json
 {
   "contact": {
     "primaryContactId": 1,
-    "emails": ["alice@example.com"],
-    "phoneNumbers": ["12345"],
+    "emails": ["lorraine@hillvalley.edu"],
+    "phoneNumbers": ["123456"],
     "secondaryContactIds": []
   }
 }
 ```
 
-Extra endpoints:
+Important:
 
-- `GET /` (homepage guide with quick usage instructions)
-- `GET /health`
-- `GET /docs`
+- Use JSON body, not form-data.
+- At least one of `email` or `phoneNumber` is required.
 
-## Notes
+### Utility Endpoints
 
-- Prisma logic is inside your Node app process; Neon is just the Postgres host.
-- No Prisma API key is required. Only DB credentials in connection URLs are required.
-- Docker now includes `dist/` because this repo uses `dist/` as active runtime source.
+- `GET /` -> human-friendly homepage with usage guide
+- `GET /health` -> health status
+- `GET /docs` -> Swagger UI
+
+## Run Locally (npm)
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Configure env (`.env`), example:
+
+```env
+PORT="3000"
+DATABASE_URL="postgresql://USER:PASSWORD@ep-xxxx-xxxx-pooler.region.aws.neon.tech/DB_NAME?sslmode=require&pgbouncer=true&connect_timeout=15"
+DIRECT_URL="postgresql://USER:PASSWORD@ep-xxxx-xxxx.region.aws.neon.tech/DB_NAME?sslmode=require&connect_timeout=15"
+```
+
+3. Sync schema:
+
+```bash
+npm run prisma:generate
+npm run prisma:db:push
+```
+
+4. Start service:
+
+```bash
+npm run start
+```
+
+5. Verify quickly:
+
+```bash
+curl http://localhost:3000/health
+curl -X POST http://localhost:3000/identify \
+  -H "Content-Type: application/json" \
+  -d '{"email":"lorraine@hillvalley.edu","phoneNumber":"123456"}'
+```
+
+## Run with Docker (Optional)
+
+```bash
+docker compose up --build
+```
+
+Local URLs:
+
+- `http://localhost:3000/`
+- `http://localhost:3000/health`
+- `http://localhost:3000/docs`
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## Deploy on Render (Neon + Node)
+
+1. Push repo to GitHub.
+2. Create a Render Web Service.
+3. Use:
+   - Build command: `npm ci && npm run prisma:generate`
+   - Start command: `npm run prisma:db:push && npm run start`
+4. Set env vars in Render:
+   - `DATABASE_URL` (Neon pooled URL)
+   - `DIRECT_URL` (Neon direct URL)
+   - `NODE_ENV=production`
+
+Port note:
+
+- Render injects `PORT` automatically.
+- App already reads `process.env.PORT`.
+
+## Design Notes / Tradeoffs
+
+- `db push` is used for quick iteration and deployment simplicity.
+- For stricter production change control, prefer `prisma migrate deploy`.
+- Runtime source is intentionally kept in `dist/` to keep project JS-only.
+
+## Submission Checklist
+
+1. Keep small, meaningful commits.
+2. Add deployed endpoint URLs in this README.
+3. Ensure `/identify` works with JSON payloads.
