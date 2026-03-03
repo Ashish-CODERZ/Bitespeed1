@@ -1,0 +1,31 @@
+{
+  "name": "bitespeed",
+  "version": "1.0.0",
+  "description": "Identity reconciliation service built with Node.js, Express, Prisma, and PostgreSQL.",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "node dist/server.js",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:db:push": "prisma db push",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy"
+  },
+  "keywords": [
+    "identity-reconciliation",
+    "express",
+    "prisma",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "prisma": "^5.22.0",
+    "pino-http": "^11.0.0",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {}
+}
